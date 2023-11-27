@@ -17,6 +17,11 @@ from scipy.special import expit
 from sklearn.metrics import r2_score
 from sklearn.tree import DecisionTreeRegressor
 
+# Import necessary packages to use R in Python
+import rpy2.robjects as robjects
+from rpy2.robjects.packages import importr
+from rpy2.robjects import pandas2ri
+
 def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadratic', missing='MAR'):
     """
     This function controls the data-generating process.
@@ -197,6 +202,26 @@ def train_model(data, d=10, DGP='quadratic', model='regression', mask=False):
                 data_X = data_X.drop(columns=['R' + str(i+1)])
         regr.fit(data_X, data['Y'])
         return regr
+    elif model == 'rpart':
+        # import the rpart package from R which will allow us to train an rpart model
+        rpart_package = importr('rpart')
+
+        # create the formula
+        formula = 'Y~'
+        for i in range(d):
+            formula += '+X' + str(i+1)
+
+        # include the missingness indicator in the regression
+        if mask:
+            for i in range(d):
+                formula += '+R' + str(i+1)
+
+        # train a decision tree, and use all default values as specified in Josse et al.
+        tree = rpart_package.rpart(formula, data=data)
+        # print(tree)
+
+        return tree
+        
     
 def make_predictions(data_test, d, model_type, mask, model):
     """
@@ -212,6 +237,9 @@ def make_predictions(data_test, d, model_type, mask, model):
             for i in range(d):
                 data_X = data_X.drop(columns=['R' + str(i+1)])
         predictions = model.predict(data_X)
+    elif model_type == 'rpart':
+        predictions = robjects.r.predict(model, newdata=data_test)
+        predictions = list(predictions)
 
     return predictions
     
@@ -228,7 +256,7 @@ def run_experiments(repetitions=1000, verbose=False):
     """
     r2_values = [[], [], [], [], [], []]
 
-    model_type = 'decision_tree'
+    model_type = 'rpart'
     DGP = 'quadratic'
     missing_mechanism = 'MCAR'
     d = 10
@@ -283,13 +311,16 @@ if __name__ == "__main__":
 
     np.random.seed(0)
 
-    print(run_experiments(repetitions=100))
-    print('baseline, drop rows, mean, out of range, mean with mask, out of range with mask')
+    # Must be activated to use R packages in Python
+    pandas2ri.activate()
+
+    # print(run_experiments(repetitions=100))
+    # print('baseline, drop rows, mean, out of range, mean with mask, out of range with mask')
 
     # code below is for testing purposes
     DGP = 'quadratic'
     missing_mechanism = 'MCAR'
-    model_type = 'decision_tree'
+    model_type = 'rpart'
     mask = False
     d = 10
     """
