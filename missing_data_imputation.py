@@ -7,8 +7,7 @@ Created: November 9, 2023
 Last updated: November 26, 2023
 
 To-do:
-1. double check mean imputation uses training set mean as the imputed value
-2. implement other methods in the paper
+1. implement other methods in the paper
 """
 
 import pandas as pd
@@ -140,21 +139,50 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
     else:
         return data
 
-def train_model(data, DGP='quadratic', model='regression', mask=False):
+def run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, imputation_value):
+    """
+    This function runs a single experiment and calculates a single R^2 value depending on
+    the imputation method and model_type.
+
+    Possible imputation_values:
+    int array representing the imputation values
+    no_missing
+    mean
+    delete_rows
+    nan
+    """
+    if imputation_value == 'mean':
+        data_train, mean = generate_data(size=size, d=d, imputation_value=imputation_value, DGP=DGP, missing=missing_mechanism)
+    else:
+        data_train = generate_data(size=size, d=d, imputation_value=imputation_value, DGP=DGP, missing=missing_mechanism)
+    
+    model = train_model(data_train, DGP=DGP, model=model_type, mask=mask)
+    # print(model.summary())
+
+    if imputation_value == 'mean':
+        data_test = generate_data(size=size, d=d, imputation_value=mean, DGP=DGP, missing=missing_mechanism)
+    else:
+        data_test = generate_data(size=size, d=d, imputation_value=imputation_value, DGP=DGP, missing=missing_mechanism)
+
+    predictions = make_predictions(data_test, d, model_type, mask, model)
+    
+    return r2_score(data_test['Y'], predictions)
+
+def train_model(data, d=10, DGP='quadratic', model='regression', mask=False):
     """
     This function trains a predictor.
     """
 
-    if DGP == 'quadratic':
-        formula = 'Y~X1+X2+X3+X4+X5+X6+X7+X8+X9+X10'
-    elif DGP == 'linear':
-        formula = 'Y~X1+X2+X3+X4+X5+X6+X7+X8+X9+X10'
-
-    # include the missingness indicator in the regression
-    if mask:
-        formula += '+R1'
-
     if model == 'regression':
+        formula = 'Y~'
+        for i in range(d):
+            formula += '+X' + str(i+1)
+
+        # include the missingness indicator in the regression
+        if mask:
+            for i in range(d):
+                formula += '+R' + str(i+1)
+
         trained_model = sm.GLM.from_formula(formula=formula, data=data, family=sm.families.Gaussian()).fit()
         return trained_model
     elif model == 'decision_tree':
@@ -164,25 +192,46 @@ def train_model(data, DGP='quadratic', model='regression', mask=False):
         regr = DecisionTreeRegressor(max_depth=30, min_samples_split=20, min_samples_leaf=7, ccp_alpha=0.01)
 
         data_X = data.drop(columns=['Y'])
+        if not mask:
+            for i in range(d):
+                data_X = data_X.drop(columns=['R' + str(i+1)])
         regr.fit(data_X, data['Y'])
         return regr
+    
+def make_predictions(data_test, d, model_type, mask, model):
+    """
+    Given a trained model and testing data, make predictions for the outcome
+    variable.
+    """
+
+    if model_type == 'regression':
+        predictions = model.predict(data_test)
+    elif model_type == 'decision_tree':
+        data_X = data_test.drop(columns=['Y'])
+        if not mask:
+            for i in range(d):
+                data_X = data_X.drop(columns=['R' + str(i+1)])
+        predictions = model.predict(data_X)
+
+    return predictions
     
 def run_experiments(repetitions=1000, verbose=False):
     """
     This function runs the synthetic experiments using four scenarios:
     1. no missing values as a baseline
     2. dropping rows of missing values
-    3. imputing by the mean of the missing variable in question
+    3. imputing by the means of the missing variables
     4. imputing by some out of range value
 
     It repeats each scenario by the specified amount of times and reports
     the average of the R^2 values.
     """
-    r2_values = [[], [], [], []]
+    r2_values = [[], [], [], [], [], []]
 
     model_type = 'decision_tree'
     DGP = 'quadratic'
     missing_mechanism = 'MCAR'
+    d = 10
     print(model_type, DGP, missing_mechanism, 'size='+str(size))
     print()
 
@@ -190,115 +239,69 @@ def run_experiments(repetitions=1000, verbose=False):
         """
         calculate baseline
         """
-        data_train = generate_data(size=size, imputation_value='no_missing', DGP=DGP, missing=missing_mechanism)
-        
-        model = train_model(data_train, DGP=DGP, model=model_type, mask=False)
-        # print(model.summary())
-
-        data_test = generate_data(size=size, imputation_value='no_missing', DGP=DGP, missing=missing_mechanism)
-
-        if model_type == 'regression':
-            predictions = model.predict(data_test)
-        elif model_type == 'decision_tree':
-            data_X = data_test.drop(columns=['Y'])
-            predictions = model.predict(data_X)
-        
-        r2_values[0].append(r2_score(data_test['Y'], predictions))
-        if verbose:
-            print('baseline no missingness: R^2 score', r2_score(data_test['Y'], predictions))
-            print()
+        mask = False
+        r2_values[0].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'no_missing'))
 
         """
         drop rows of missing values
         """
-        data_train = generate_data(size=size, imputation_value='delete_rows', DGP=DGP, missing=missing_mechanism)
-        
-        model = train_model(data_train, DGP=DGP, model=model_type, mask=False)
-        # print(model.summary())
-
-        data_test = generate_data(size=size, imputation_value='delete_rows', DGP=DGP, missing=missing_mechanism)
-
-        if model_type == 'regression':
-            predictions = model.predict(data_test)
-        elif model_type == 'decision_tree':
-            data_X = data_test.drop(columns=['Y'])
-            predictions = model.predict(data_X)
-        
-        r2_values[1].append(r2_score(data_test['Y'], predictions))
-        if verbose:
-            print('drop rows of missing data: R^2 score', r2_score(data_test['Y'], predictions))
-            print()
+        mask = False
+        r2_values[1].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'delete_rows'))
 
         """
         mean imputation
         """
-        data_train, mean = generate_data(size=size, imputation_value='mean', DGP=DGP, missing=missing_mechanism)
-        
-        model = train_model(data_train, DGP=DGP, model=model_type, mask=False)
-        # print(model.summary())
-
-        # impute the testing dataset by the mean of the training dataset
-        data_test = generate_data(size=size, imputation_value=mean, DGP=DGP, missing=missing_mechanism)
-
-        if model_type == 'regression':
-            predictions = model.predict(data_test)
-        elif model_type == 'decision_tree':
-            data_X = data_test.drop(columns=['Y'])
-            predictions = model.predict(data_X)
-
-        r2_values[2].append(r2_score(data_test['Y'], predictions))
-        if verbose:
-            print('mean imputation: R^2 score', r2_score(data_test['Y'], predictions))
-            print()
+        mask = False
+        # during mean imputation, we obtain a vector of means for each of X_i from the training dataset to 
+        # use as the imputation value in the testing dataset
+        r2_values[2].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mean'))
 
         """
         out of range imputation
         """
-        data_train = generate_data(size=size, imputation_value=[99999]*10, DGP=DGP, missing=missing_mechanism)
-        
-        model = train_model(data_train, DGP=DGP, model=model_type, mask=False)
-        # print(model.summary())
+        mask = False
+        r2_values[3].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
 
-        data_test = generate_data(size=size, imputation_value=[99999]*10, DGP=DGP, missing=missing_mechanism)
+        """
+        mean imputation with mask
+        """
+        mask = True
+        # during mean imputation, we obtain a vector of means for each of X_i from the training dataset to 
+        # use as the imputation value in the testing dataset
+        r2_values[4].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mean'))
 
-        if model_type == 'regression':
-            predictions = model.predict(data_test)
-        elif model_type == 'decision_tree':
-            data_X = data_test.drop(columns=['Y'])
-            predictions = model.predict(data_X)
+        """
+        out of range imputation with mask
+        """
+        mask = True
+        r2_values[5].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
 
-        r2_values[3].append(r2_score(data_test['Y'], predictions))
-        if verbose:
-            print('out of range imputation: R^2 score', r2_score(data_test['Y'], predictions))
-            print()
-
-    return (np.mean(r2_values[0]), np.mean(r2_values[1]), np.mean(r2_values[2]), np.mean(r2_values[3]))
+    return [np.mean(r2_values[i]) for i in range(6)]
 
 if __name__ == "__main__":
     size = 1000
 
     np.random.seed(0)
 
-    # print(run_experiments())
+    print(run_experiments(repetitions=100))
+    print('baseline, drop rows, mean, out of range, mean with mask, out of range with mask')
 
     # code below is for testing purposes
     DGP = 'quadratic'
     missing_mechanism = 'MCAR'
     model_type = 'decision_tree'
+    mask = False
+    d = 10
     """
     mean imputation
     """
-    data_train, mean = generate_data(size=size, imputation_value='mean', DGP=DGP, missing=missing_mechanism)
+    data_train = generate_data(size=size, d=d, imputation_value=[99999]*10, DGP=DGP, missing=missing_mechanism)
     
-    # model = train_model(data_train, DGP=DGP, model=model_type, mask=False)
-    # # print(model.summary())
+    model = train_model(data_train, d=d, DGP=DGP, model=model_type, mask=mask)
+    # print(model.summary())
 
-    # data_test = generate_data(size=size, imputation_value=mean, DGP=DGP, missing=missing_mechanism)
+    data_test = generate_data(size=size, d=d, imputation_value=[99999]*10, DGP=DGP, missing=missing_mechanism)
 
-    # if model_type == 'regression':
-    #     predictions = model.predict(data_test)
-    # elif model_type == 'decision_tree':
-    #     data_X = data_test.drop(columns=['Y'])
-    #     predictions = model.predict(data_X)
+    predictions = make_predictions(data_test, d, model_type, mask, model)
 
-    # print(r2_score(data_test['Y'], predictions))
+    print(r2_score(data_test['Y'], predictions))
