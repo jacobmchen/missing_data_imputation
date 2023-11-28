@@ -38,20 +38,20 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
     
     # add together two matrices: first one is a dxd matrix composed of just rho
     # second one is a dxd identity matrix multiplied by (1-rho)
-    sigma = np.add([[rho]*d]*d , (1-rho) * np.identity(d))
+    sigma = np.add(np.asmatrix([[rho]*d]*d), (1-rho) * np.identity(d))
     
     X_vec = np.random.multivariate_normal(mu, sigma, size)
 
     # separate the generated vector into individual data columns by storing the values 
     # into a list of lists
     X = []
-    for i in range(10):
-        X.append(X_vec[:, i])
+    for i in range(d):
+        X.append(np.array(X_vec[:, i]))
 
     # decide how the outcome variable Y is calculated
     if DGP == 'quadratic':
         # quadratic DGP
-        Y = X[0]*X[0] + np.random.normal(0, 0.1, size)
+        Y = X[0]**2 + np.random.normal(0, 0.1, size)
     elif DGP == 'linear':
         # linear DGP
         Y = np.random.normal(0, 0.1, size)
@@ -81,17 +81,17 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
 
         for i in range(d):
             # append a dummy value so that the array does not go out of bounds
-            R.append(0)
-            R[i] = np.random.binomial(1, 0.8, size)
+            R.append(np.random.binomial(1, 0.8, size))
     elif missing == 'predictive':
         # a pattern mixture model where the missingness indicator is a part
         # of the regression function
         pass
-
-    data = pd.DataFrame({'X1': X[0], 'X2': X[1], 'X3': X[2], 'X4': X[3], 'X5': X[4], 'X6': X[5],
-                         'X7': X[6], 'X8': X[7], 'X9': X[8], 'X10': X[9], 'Y': Y, 'R1': R[0],
-                         'R2': R[1], 'R3': R[2], 'R4': R[3], 'R5': R[4], 'R6': R[5], 'R7': R[6],
-                         'R8': R[7], 'R9': R[8], 'R10': R[9]})
+    
+    # create the dataframe with all the variables
+    data = pd.DataFrame({'Y': Y})
+    for i in range(d):
+        data['X'+str(i+1)] = X[i]
+        data['R'+str(i+1)] = R[i]
 
     # impute the missing values
     if imputation_value == 'mean':
@@ -134,10 +134,10 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
     
     # after imputting missing values, put the partially observed variables back into the
     # dataframe so that they are actually udpated with the imputed values
-    data = pd.DataFrame({'X1': X[0], 'X2': X[1], 'X3': X[2], 'X4': X[3], 'X5': X[4], 'X6': X[5],
-                         'X7': X[6], 'X8': X[7], 'X9': X[8], 'X10': X[9], 'Y': Y, 'R1': R[0],
-                         'R2': R[1], 'R3': R[2], 'R4': R[3], 'R5': R[4], 'R6': R[5], 'R7': R[6],
-                         'R8': R[7], 'R9': R[8], 'R10': R[9]})
+    data = pd.DataFrame({'Y': Y})
+    for i in range(d):
+        data['X'+str(i+1)] = X[i]
+        data['R'+str(i+1)] = R[i]
 
     if imputation_value == 'mean':
         return data, mean
@@ -161,7 +161,7 @@ def run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, imp
     else:
         data_train = generate_data(size=size, d=d, imputation_value=imputation_value, DGP=DGP, missing=missing_mechanism)
     
-    model = train_model(data_train, DGP=DGP, model=model_type, mask=mask)
+    model = train_model(data_train, d=d, DGP=DGP, model=model_type, mask=mask)
     # print(model.summary())
 
     if imputation_value == 'mean':
@@ -254,12 +254,12 @@ def run_experiments(repetitions=1000, verbose=False):
     It repeats each scenario by the specified amount of times and reports
     the average of the R^2 values.
     """
-    r2_values = [[], [], [], [], [], []]
+    r2_values = [[], [], [], [], [], [], [], []]
 
     model_type = 'rpart'
     DGP = 'quadratic'
     missing_mechanism = 'MCAR'
-    d = 10
+    d = 9
     print(model_type, DGP, missing_mechanism, 'size='+str(size))
     print()
 
@@ -304,35 +304,51 @@ def run_experiments(repetitions=1000, verbose=False):
         mask = True
         r2_values[5].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
 
-    return [np.mean(r2_values[i]) for i in range(6)]
+        """
+        CART with surrogate splits with no mask
+        """
+        mask = False
+        r2_values[6].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+
+        """
+        CART with surrogate splits with mask
+        """
+        mask = True
+        r2_values[7].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+
+    return [np.mean(r2_values[i]) for i in range(8)]
 
 if __name__ == "__main__":
     size = 1000
 
     np.random.seed(0)
 
+    # disable warnings about chained assignments in dataframe
+    pd.options.mode.chained_assignment = None  # default='warn'
+
     # Must be activated to use R packages in Python
     pandas2ri.activate()
 
-    # print(run_experiments(repetitions=100))
-    # print('baseline, drop rows, mean, out of range, mean with mask, out of range with mask')
+    print(run_experiments(repetitions=1000))
+    print('baseline, drop rows, mean, out of range, mean with mask, out of range with mask, CART with surrogate splits',
+          'CART with surrogate splits with mask')
 
-    # code below is for testing purposes
-    DGP = 'quadratic'
-    missing_mechanism = 'MCAR'
-    model_type = 'rpart'
-    mask = False
-    d = 10
-    """
-    mean imputation
-    """
-    data_train = generate_data(size=size, d=d, imputation_value=[99999]*10, DGP=DGP, missing=missing_mechanism)
+    # # code below is for testing purposes
+    # DGP = 'quadratic'
+    # missing_mechanism = 'MCAR'
+    # model_type = 'rpart'
+    # mask = False
+    # d = 9
+    # """
+    # mean imputation
+    # """
+    # data_train = generate_data(size=size, d=d, imputation_value='nan', DGP=DGP, missing=missing_mechanism)
     
-    model = train_model(data_train, d=d, DGP=DGP, model=model_type, mask=mask)
-    # print(model.summary())
+    # model = train_model(data_train, d=d, DGP=DGP, model=model_type, mask=mask)
+    # print(model)
 
-    data_test = generate_data(size=size, d=d, imputation_value=[99999]*10, DGP=DGP, missing=missing_mechanism)
+    # data_test = generate_data(size=size, d=d, imputation_value='nan', DGP=DGP, missing=missing_mechanism)
 
-    predictions = make_predictions(data_test, d, model_type, mask, model)
+    # predictions = make_predictions(data_test, d, model_type, mask, model)
 
-    print(r2_score(data_test['Y'], predictions))
+    # print(r2_score(data_test['Y'], predictions))
