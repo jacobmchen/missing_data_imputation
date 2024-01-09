@@ -4,7 +4,7 @@ classifier according to paper by Julie et al.
 
 Created: November 9, 2023
 
-Last updated: November 26, 2023
+Last updated: January 9, 2024
 
 To-do:
 1. implement other methods in the paper
@@ -16,17 +16,23 @@ import statsmodels.api as sm
 from scipy.special import expit
 from sklearn.metrics import r2_score
 from sklearn.tree import DecisionTreeRegressor
+import pickle
 
 # Import necessary packages to use R in Python
 import rpy2.robjects as robjects
+import rpy2.robjects.packages as rpackages
 from rpy2.robjects.packages import importr
 from rpy2.robjects import pandas2ri
+from rpy2.robjects import Formula
 
-def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadratic', missing='MAR'):
+def generate_data(size=1000, rho=0.5, d=10, num_missing=3, imputation_value=[0]*10, DGP='quadratic', missing='MCAR'):
     """
     This function controls the data-generating process.
 
     imputation_value is a list to indicate the value of the inputted value for each X
+
+    num_missing indicates how many variables in the vector X will suffer from missing values;
+    the first num_missing variables will suffer from missingness
 
     note: when imputation value is mean, this function also returns the mean of X1
     to use in the imputation of the test distribution
@@ -56,7 +62,7 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
         # linear DGP
         Y = np.random.normal(0, 0.1, size)
         beta = [1, 2, -1, 3, -0.5, -1, 0.3, 1.7, 0.4, -0.3]
-        for i in range(10):
+        for i in range(d):
             Y += beta[i]*X[i]
 
     # create a list where R[i] is the missingness indicator for X[i]
@@ -65,7 +71,8 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
     # induce missingness
     # value of 1 in R[i] indicates observed
     if missing == 'MNAR':
-        pass
+        print('invalid')
+        return
         # in progress
         # only keep values above 20th percentile as p = 0.8
         # R1 = []
@@ -79,18 +86,20 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
         # there is a 20% chance of observing the value of X[i]
         # 20% of missing values is consistent with the paper
 
-        for i in range(d):
-            # append a dummy value so that the array does not go out of bounds
+        for i in range(num_missing):
+            # append the entire array to R
             R.append(np.random.binomial(1, 0.8, size))
     elif missing == 'predictive':
         # a pattern mixture model where the missingness indicator is a part
         # of the regression function
-        pass
+        print('invalid')
+        return
     
     # create the dataframe with all the variables
     data = pd.DataFrame({'Y': Y})
     for i in range(d):
         data['X'+str(i+1)] = X[i]
+    for i in range(num_missing):
         data['R'+str(i+1)] = R[i]
 
     # impute the missing values
@@ -98,7 +107,7 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
         # find the mean of the observed values for each variable
         mean = []
 
-        for i in range(d):
+        for i in range(num_missing):
             data_copy = data.copy()
             data_copy = data_copy[data_copy['R' + str(i+1)] == 1]
             mean.append(np.mean(data_copy['X' + str(i+1)]))
@@ -107,21 +116,22 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
         # only keep rows of data where every single value of X is observed
         data_copy = data.copy()
 
-        for i in range(d):
+        for i in range(num_missing):
             data_copy = data_copy[data_copy['R' + str(i+1)] == 1]
 
         return data_copy
     elif imputation_value == 'nan':
         data_copy = data.copy()
-        for i in range(d):
+        for i in range(num_missing):
             for j in range(len(data_copy['X' + str(i+1)])):
-                if data_copy['R' + str(i+1)][j] == 0:
-                    data_copy['X' + str(i+1)][j] = np.nan
+                if data_copy.at[j, 'R' + str(i+1)] == 0:
+                    # data_copy['X' + str(i+1)][j] = np.nan
+                    data_copy.at[j, 'X' + str(i+1)] = np.nan
         return data_copy
     elif imputation_value == 'no_missing':
         return data
 
-    for j in range(d):
+    for j in range(num_missing):
         for i in range(len(R[j])):
             # replace missing values with the mean or the designated imputation value
             if R[j][i] == 0:
@@ -137,6 +147,7 @@ def generate_data(size=1000, rho=0.5, d=10, imputation_value=[0]*10, DGP='quadra
     data = pd.DataFrame({'Y': Y})
     for i in range(d):
         data['X'+str(i+1)] = X[i]
+    for i in range(num_missing):
         data['R'+str(i+1)] = R[i]
 
     if imputation_value == 'mean':
@@ -165,15 +176,31 @@ def run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, imp
     # print(model.summary())
 
     if imputation_value == 'mean':
+        # use the calculated mean values from the training dataset as the imputation values in the testing dataset
         data_test = generate_data(size=size, d=d, imputation_value=mean, DGP=DGP, missing=missing_mechanism)
     else:
         data_test = generate_data(size=size, d=d, imputation_value=imputation_value, DGP=DGP, missing=missing_mechanism)
 
     predictions = make_predictions(data_test, d, model_type, mask, model)
-    
+    # fill NaN values with the mean in case a model ever makes a NaN prediction
+    # (this seems to only happen with the ctree model)
+    # calculate the mean
+    cnt = 0
+    sum = 0
+    for i in range(len(predictions)):
+        if not np.isnan(predictions[i]):
+            cnt += 1
+            sum += predictions[i]
+    mean = sum / cnt
+
+    for i in range(len(predictions)):
+        if np.isnan(predictions[i]):
+            predictions[i] = mean
+    # predictions = list(pd.Series(predictions).fillna(np.mean(predictions)))
+
     return r2_score(data_test['Y'], predictions)
 
-def train_model(data, d=10, DGP='quadratic', model='regression', mask=False):
+def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', mask=False):
     """
     This function trains a predictor.
     """
@@ -185,7 +212,7 @@ def train_model(data, d=10, DGP='quadratic', model='regression', mask=False):
 
         # include the missingness indicator in the regression
         if mask:
-            for i in range(d):
+            for i in range(num_missing):
                 formula += '+R' + str(i+1)
 
         trained_model = sm.GLM.from_formula(formula=formula, data=data, family=sm.families.Gaussian()).fit()
@@ -198,7 +225,7 @@ def train_model(data, d=10, DGP='quadratic', model='regression', mask=False):
 
         data_X = data.drop(columns=['Y'])
         if not mask:
-            for i in range(d):
+            for i in range(num_missing):
                 data_X = data_X.drop(columns=['R' + str(i+1)])
         regr.fit(data_X, data['Y'])
         return regr
@@ -213,16 +240,34 @@ def train_model(data, d=10, DGP='quadratic', model='regression', mask=False):
 
         # include the missingness indicator in the regression
         if mask:
-            for i in range(d):
+            for i in range(num_missing):
                 formula += '+R' + str(i+1)
 
         # train a decision tree, and use all default values as specified in Josse et al.
-        tree = rpart_package.rpart(formula, data=data)
+        tree = rpart_package.rpart(formula=Formula(formula), data=data)
         # print(tree)
 
         return tree
+    elif model == 'ctree':
+        # import the partykit package from R which contains the ctree implementation
+        partykit_package = importr('partykit')
+
+        # create the formula
+        formula = 'Y~'
+        for i in range(d):
+            formula += '+X' + str(i+1)
+
+        # include the missingness indicator in the regression
+        if mask:
+            for i in range(num_missing):
+                formula += '+R' + str(i+1)
         
-    
+        # train a ctree using all default values
+        tree = partykit_package.ctree(formula=Formula(formula), data=data)
+
+        return tree
+
+        
 def make_predictions(data_test, d, model_type, mask, model):
     """
     Given a trained model and testing data, make predictions for the outcome
@@ -237,7 +282,7 @@ def make_predictions(data_test, d, model_type, mask, model):
             for i in range(d):
                 data_X = data_X.drop(columns=['R' + str(i+1)])
         predictions = model.predict(data_X)
-    elif model_type == 'rpart':
+    elif model_type == 'rpart' or model_type == 'ctree':
         predictions = robjects.r.predict(model, newdata=data_test)
         predictions = list(predictions)
 
@@ -254,27 +299,27 @@ def run_experiments(repetitions=1000, verbose=False):
     It repeats each scenario by the specified amount of times and reports
     the average of the R^2 values.
     """
-    r2_values = [[], [], [], [], [], [], [], []]
+    r2_values = [[], [], [], [], [], [], [], [], []]
+
+    size = 2000
+    np.random.seed(0)
 
     model_type = 'rpart'
     DGP = 'quadratic'
     missing_mechanism = 'MCAR'
     d = 9
-    print(model_type, DGP, missing_mechanism, 'size='+str(size))
+    print(model_type, 'and ctree;', DGP, missing_mechanism, 'size='+str(size), 'repetitions=', repetitions)
     print()
 
     for i in range(repetitions):
+        cnt = 0
+
         """
         calculate baseline
         """
         mask = False
-        r2_values[0].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'no_missing'))
-
-        """
-        drop rows of missing values
-        """
-        mask = False
-        r2_values[1].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'delete_rows'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'no_missing'))
+        cnt += 1
 
         """
         mean imputation
@@ -282,13 +327,8 @@ def run_experiments(repetitions=1000, verbose=False):
         mask = False
         # during mean imputation, we obtain a vector of means for each of X_i from the training dataset to 
         # use as the imputation value in the testing dataset
-        r2_values[2].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mean'))
-
-        """
-        out of range imputation
-        """
-        mask = False
-        r2_values[3].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mean'))
+        cnt += 1
 
         """
         mean imputation with mask
@@ -296,53 +336,84 @@ def run_experiments(repetitions=1000, verbose=False):
         mask = True
         # during mean imputation, we obtain a vector of means for each of X_i from the training dataset to 
         # use as the imputation value in the testing dataset
-        r2_values[4].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mean'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mean'))
+        cnt += 1
+
+        """
+        out of range imputation
+        """
+        mask = False
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
+        cnt += 1
 
         """
         out of range imputation with mask
         """
         mask = True
-        r2_values[5].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
+        cnt += 1
 
         """
         CART with surrogate splits with no mask
         """
         mask = False
-        r2_values[6].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+        cnt += 1
 
         """
         CART with surrogate splits with mask
         """
         mask = True
-        r2_values[7].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+        cnt += 1
 
-    return [np.mean(r2_values[i]) for i in range(8)]
+        """
+        ctree with no mask
+        """
+        mask = False
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
+        cnt += 1
+
+        """
+        ctree with mask
+        """
+        mask = True
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
+        cnt += 1
+
+    return [np.mean(r2_values[i]) for i in range(9)], r2_values
 
 if __name__ == "__main__":
-    size = 1000
-
-    np.random.seed(0)
-
-    # disable warnings about chained assignments in dataframe
-    pd.options.mode.chained_assignment = None  # default='warn'
-
     # Must be activated to use R packages in Python
     pandas2ri.activate()
 
-    print(run_experiments(repetitions=1000))
-    print('baseline, drop rows, mean, out of range, mean with mask, out of range with mask, CART with surrogate splits',
-          'CART with surrogate splits with mask')
+    result = run_experiments(repetitions=1000)
+    print('mean values', result[0])
+    print('baseline, mean, mean with mask, out of range, out of range with mask, CART with surrogate splits',
+          'CART with surrogate splits with mask', 'ctree no mask', 'ctree with mask')
+    
+    output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
+                           'rpart': result[1][5], 'rpart + mask': result[1][6], 'ctree': result[1][7],
+                           'ctree + mask': result[1][8]})
+    # print(output)
+    # pickle the entire array of results
+    with open('r2_values.pkl', 'wb') as file:
+        pickle.dump(output, file)
 
+    print('success')
     # # code below is for testing purposes
+    # np.random.seed(0)
     # DGP = 'quadratic'
     # missing_mechanism = 'MCAR'
-    # model_type = 'rpart'
+    # model_type = 'ctree'
     # mask = False
     # d = 9
+    # size = 2000
     # """
     # mean imputation
     # """
     # data_train = generate_data(size=size, d=d, imputation_value='nan', DGP=DGP, missing=missing_mechanism)
+    # print(data_train)
     
     # model = train_model(data_train, d=d, DGP=DGP, model=model_type, mask=mask)
     # print(model)
