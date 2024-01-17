@@ -1,9 +1,22 @@
+"""
+Code that trains different kinds of functions given a dataset and also makes predictions
+given a model and testing data.
+
+Created: January 15, 2024
+
+Updated: January 16, 2024
+"""
+
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
+import xgboost as xgb
 from scipy.special import expit
 from sklearn.metrics import r2_score
 from sklearn.tree import DecisionTreeRegressor
+
+# for testing purposes, import code for generating a dataset
+from data_generation import generate_data
 
 # Import necessary packages to use R in Python
 import rpy2.robjects as robjects
@@ -11,6 +24,36 @@ import rpy2.robjects.packages as rpackages
 from rpy2.robjects.packages import importr
 from rpy2.robjects import pandas2ri
 from rpy2.robjects import Formula
+
+def create_formula(d, num_missing, mask):
+    # helper function for creating a regression formula
+
+    # create the formula
+    formula = 'Y~'
+    for i in range(d):
+        formula += '+X' + str(i+1)
+
+    # include the missingness indicator in the regression
+    if mask:
+        for i in range(num_missing):
+            formula += '+R' + str(i+1)
+
+    return formula
+
+def create_matrix(data, d, num_missing, mask):
+    # helper function for creating a data matrix in the format
+    # required for xgboost
+
+    matrix = []
+    for i in range(len(data)):
+        row = []
+        for j in range(d):
+            row.append(data.at[i, 'X'+str(j+1)])
+        if mask:
+            for j in range(num_missing):
+                row.append(data.at[i, 'R'+str(j+1)])
+        matrix.append(row)
+    return matrix
 
 def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', mask=False):
     """
@@ -45,15 +88,7 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         # import the rpart package from R which will allow us to train an rpart model
         rpart_package = importr('rpart')
 
-        # create the formula
-        formula = 'Y~'
-        for i in range(d):
-            formula += '+X' + str(i+1)
-
-        # include the missingness indicator in the regression
-        if mask:
-            for i in range(num_missing):
-                formula += '+R' + str(i+1)
+        formula = create_formula(d, num_missing, mask)
 
         # train a decision tree, and use all default values as specified in Josse et al.
         tree = rpart_package.rpart(formula=Formula(formula), data=data)
@@ -64,26 +99,45 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         # import the partykit package from R which contains the ctree implementation
         partykit_package = importr('partykit')
 
-        # create the formula
-        formula = 'Y~'
-        for i in range(d):
-            formula += '+X' + str(i+1)
-
-        # include the missingness indicator in the regression
-        if mask:
-            for i in range(num_missing):
-                formula += '+R' + str(i+1)
+        formula = create_formula(d, num_missing, mask)
         
         # train a ctree using all default values
         tree = partykit_package.ctree(formula=Formula(formula), data=data)
 
         return tree
+    elif model == 'random_forest':
+        # import the ranger package from R which contains the random forest implementation
+        ranger_package = importr('ranger')
 
-def make_predictions(data_test, d, model_type, mask, model):
+        formula = create_formula(d, num_missing, mask)
+
+        # train a random forest using all default values from the package
+        rand_forest = ranger_package.ranger(formula=Formula(formula), data=data)
+
+        # return the model
+        return rand_forest
+    elif model == 'xgboost':
+        # first step is to recombine all the X variables and/or the R variables into a single
+        # two-dimensional array in the original format of the multivariate normal function
+
+        matrix = create_matrix(data, d, num_missing, mask)
+
+        # change the input format
+        train_matrix = xgb.DMatrix(matrix, label=data['Y'])
+
+        # train the model
+        xgboost_model = xgb.train({}, train_matrix)
+
+        return xgboost_model
+
+
+def make_predictions(data_test, d, model_type, mask, model, num_missing=3):
     """
     Given a trained model and testing data, make predictions for the outcome
     variable.
     """
+    # create an empty array as the return value
+    predictions = []
 
     if model_type == 'regression':
         predictions = model.predict(data_test)
@@ -96,5 +150,27 @@ def make_predictions(data_test, d, model_type, mask, model):
     elif model_type == 'rpart' or model_type == 'ctree':
         predictions = robjects.r.predict(model, newdata=data_test)
         predictions = list(predictions)
+    elif model_type == 'random_forest':
+        predictions = robjects.r.predict(model, data=data_test)
+        # in the ranger package, the first value of the predictions contains the
+        # actual predicted values
+        predictions = list(predictions[0])
+    elif model_type == 'xgboost':
+        # first step is to recombine all the X variables and/or the R variables into a single
+        # two-dimensional array
+
+        matrix = create_matrix(data_test, d, num_missing, mask)
+
+        # change the input format 
+        test_matrix = xgb.DMatrix(matrix)
+
+        # use the model to make predictions
+        predictions = model.predict(test_matrix)
 
     return predictions
+
+if __name__ == "__main__":
+    np.random.seed(0)
+
+    data = generate_data()
+    print(data)

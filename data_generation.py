@@ -1,3 +1,11 @@
+"""
+Code implementing the data-generating process specified in Josse et al.
+
+Created: January 15, 2024
+
+Last updated: January 16, 2024
+"""
+
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -6,7 +14,7 @@ from sklearn.metrics import r2_score
 from sklearn.tree import DecisionTreeRegressor
 import pickle
 
-def generate_data(size=1000, rho=0.5, d=10, num_missing=3, imputation_value=[0]*10, DGP='quadratic', missing='MCAR'):
+def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_value=[0]*10, DGP='quadratic', missing='MCAR'):
     """
     This function controls the data-generating process.
 
@@ -35,47 +43,73 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, imputation_value=[0]*
     for i in range(d):
         X.append(np.array(X_vec[:, i]))
 
-    # decide how the outcome variable Y is calculated
-    if DGP == 'quadratic':
-        # quadratic DGP
-        Y = X[0]**2 + np.random.normal(0, 0.1, size)
-    elif DGP == 'linear':
-        # linear DGP
-        Y = np.random.normal(0, 0.1, size)
-        beta = [1, 2, -1, 3, -0.5, -1, 0.3, 1.7, 0.4, -0.3]
-        for i in range(d):
-            Y += beta[i]*X[i]
-
     # create a list where R[i] is the missingness indicator for X[i]
     R = []
 
     # induce missingness
     # value of 1 in R[i] indicates observed
     if missing == 'MNAR':
-        print('invalid')
-        return
-        # in progress
         # only keep values above 20th percentile as p = 0.8
-        # R1 = []
-        # q20 = np.quantile(X[0], 0.2)
-        # for i in range(len(X[0])):
-        #     if X[0][i] > q20:
-        #         R1.append(1)
-        #     else:
-        #         R1.append(0)
+        
+        for i in range(num_missing):
+            # create an array for the missingness indicator
+            R_i = []
+            # find the 1-pth quantile of the array
+            q = np.quantile(X[i], 1-p)
+            # only keep values that are above the 1-pth quantile of the array
+            for i in range(len(X[i])):
+                if X[0][i] > q:
+                    R_i.append(1)
+                else:
+                    R_i.append(0)
+            
+            R.append(R_i)
     elif missing == 'MCAR':
         # there is a 20% chance of observing the value of X[i]
         # 20% of missing values is consistent with the paper
 
+        # note: when the DGP is linear, Friedman, or nonlinear, the missingness mechanism
+        # is always MCAR
+
         for i in range(num_missing):
             # append the entire array to R
-            R.append(np.random.binomial(1, 0.8, size))
+            R.append(np.random.binomial(1, p, size))
     elif missing == 'predictive':
         # a pattern mixture model where the missingness indicator is a part
         # of the regression function
+        # note that the predictive missingness mechanism is only applicable for model 1
+
+        # first, the missing values are generated from a Bernoulli distribution like in the 
+        # MCAR case
+        for i in range(num_missing):
+            # append the entire array to R
+            R.append(np.random.binomial(1, p, size))
+    else:
         print('invalid')
         return
     
+    # decide how the outcome variable Y is calculated
+    if DGP == 'quadratic' and missing != 'predictive':
+        # quadratic DGP
+        Y = X[0]**2 + np.random.normal(0, 0.1, size)
+    elif DGP == 'quadratic' and missing == 'predictive':
+        # a pattern mixture model where the missingness indicator is a part
+        # of the regression function
+
+        # this missingness mechanism should only be possible when the DGP is set to quadratic
+        Y = np.random.normal(0, 0.1, size)
+        for i in range(num_missing):
+            Y += X[i]**2 + 2*R[i]
+    elif DGP == 'linear':
+        # linear DGP
+        Y = np.random.normal(0, 0.1, size)
+        beta = [1, 2, -1, 3, -0.5, -1, 0.3, 1.7, 0.4, -0.3]
+        for i in range(d):
+            Y += beta[i]*X[i]
+    else:
+        print('invalid')
+        return
+
     # create the dataframe with all the variables
     data = pd.DataFrame({'Y': Y})
     for i in range(d):
@@ -135,3 +169,9 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, imputation_value=[0]*
         return data, mean
     else:
         return data
+    
+
+if __name__ == "__main__":
+    np.random.seed(0)
+
+    print(generate_data(missing="predictive"))
