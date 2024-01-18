@@ -14,6 +14,12 @@ from sklearn.metrics import r2_score
 from sklearn.tree import DecisionTreeRegressor
 import pickle
 
+# Import necessary packages to use R in Python
+import rpy2.robjects as robjects
+import rpy2.robjects.packages as rpackages
+from rpy2.robjects.packages import importr
+from rpy2.robjects import pandas2ri
+
 def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_value=[0]*10, DGP='quadratic', missing='MCAR'):
     """
     This function controls the data-generating process.
@@ -90,8 +96,8 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
     
     # decide how the outcome variable Y is calculated
     if DGP == 'quadratic' and missing != 'predictive':
-        # quadratic DGP
-        Y = X[0]**2 + np.random.normal(0, 0.1, size)
+        # quadratic DGP, use the first three variables in the DGP
+        Y = X[0]**2 + X[1]**2 + X[2]**2 + np.random.normal(0, 0.1, size)
     elif DGP == 'quadratic' and missing == 'predictive':
         # a pattern mixture model where the missingness indicator is a part
         # of the regression function
@@ -140,12 +146,77 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
         for i in range(num_missing):
             for j in range(len(data_copy['X' + str(i+1)])):
                 if data_copy.at[j, 'R' + str(i+1)] == 0:
-                    # data_copy['X' + str(i+1)][j] = np.nan
                     data_copy.at[j, 'X' + str(i+1)] = np.nan
         return data_copy
+    elif imputation_value == 'mia':
+        data_copy = data.copy()
+
+        # step 1: make two copies of the columns of data that are incomplete
+        for i in range(num_missing):
+            data_copy['X'+str(i+1)+'copy1'] = data_copy['X'+str(i+1)].copy()
+            data_copy['X'+str(i+1)+'copy2'] = data_copy['X'+str(i+1)].copy()
+
+        # step 2: in the first copy, impute the missing values with negative infinity
+        for i in range(num_missing):
+            for j in range(len(data_copy['X'+str(i+1)+'copy1'])):
+                if data_copy.at[j, 'R'+str(i+1)] == 0:
+                    data_copy.at[j, 'X'+str(i+1)+'copy1'] = -10**10
+
+        # step 3: in the second copy, impute the missing values with positive infinity
+        for i in range(num_missing):
+            for j in range(len(data_copy['X'+str(i+1)+'copy2'])):
+                if data_copy.at[j, 'R'+str(i+1)] == 0:
+                    data_copy.at[j, 'X'+str(i+1)+'copy2'] = 10**10
+
+        # step 4: delete the original column of data
+        for i in range(num_missing):
+            data_copy = data_copy.drop(columns=['X'+str(i+1)])
+
+        # step 5: return the updated dataset
+        return data_copy
+    elif imputation_value == 'gaussian':
+        # **this is still in progress
+
+        # step 1: fill in nan values in the original dataset
+        data_copy = data.copy()
+        for i in range(num_missing):
+            for j in range(len(data_copy['X' + str(i+1)])):
+                if data_copy.at[j, 'R' + str(i+1)] == 0:
+                    data_copy.at[j, 'X' + str(i+1)] = np.nan
+
+        # step 2: convert the dataset into the format necessary for the norm package
+        data_copy = data_copy.drop(columns=['R1', 'R2', 'R3', 'Y'])
+        vector = []
+        for i in range(d):
+            vals = np.array(data['X'+str(i+1)])
+            for j in range(len(vals)):
+                vector.append(vals[j])
+        vector = robjects.FloatVector(vector)
+        matrix = robjects.r['matrix'](vector, nrow=size)
+
+        # step 3: use the norm package to estimate mu and sigma
+        # import the package
+        norm_package = importr('norm')
+
+        prelim = robjects.r['prelim.norm']
+        s = prelim(matrix)
+
+        em = robjects.r['em.norm']
+        thetahat = em(s)
+
+        getparam = robjects.r['getparam.norm']
+        output = getparam(s, thetahat, corr=False)
+        mu_hat = output[0]
+        sigma_hat = output[1]
+        print(mu_hat)
+        print(sigma_hat)
+
+        return True
     elif imputation_value == 'no_missing':
         return data
 
+    # the following code only applies to the mean imputation method or specifying a
+    # custom imputation value
     for j in range(num_missing):
         for i in range(len(R[j])):
             # replace missing values with the mean or the designated imputation value
@@ -154,8 +225,6 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
                     X[j][i] = mean[j]
                 else:
                     X[j][i] = imputation_value[j]
-
-    # print('proportion of observed X1:', np.mean(R1))
     
     # after imputting missing values, put the partially observed variables back into the
     # dataframe so that they are actually udpated with the imputed values
@@ -174,4 +243,4 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
 if __name__ == "__main__":
     np.random.seed(0)
 
-    print(generate_data(missing="predictive"))
+    print(generate_data(missing="MCAR", imputation_value='mia'))

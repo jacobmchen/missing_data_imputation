@@ -25,34 +25,46 @@ from rpy2.robjects.packages import importr
 from rpy2.robjects import pandas2ri
 from rpy2.robjects import Formula
 
-def create_formula(d, num_missing, mask):
+def create_formula(data, mask):
     # helper function for creating a regression formula
+
+    vars = data.columns
 
     # create the formula
     formula = 'Y~'
-    for i in range(d):
-        formula += '+X' + str(i+1)
-
-    # include the missingness indicator in the regression
-    if mask:
-        for i in range(num_missing):
-            formula += '+R' + str(i+1)
+    for i in range(len(vars)):
+        if vars[i][0] == 'R':
+            if mask:
+                formula += '+'+vars[i]
+        elif vars[i][0] == 'Y':
+            continue
+        else:
+            formula += '+'+vars[i]
 
     return formula
 
-def create_matrix(data, d, num_missing, mask):
+def create_matrix(data, mask):
     # helper function for creating a data matrix in the format
     # required for xgboost
+
+    vars = data.columns
 
     matrix = []
     for i in range(len(data)):
         row = []
-        for j in range(d):
-            row.append(data.at[i, 'X'+str(j+1)])
-        if mask:
-            for j in range(num_missing):
-                row.append(data.at[i, 'R'+str(j+1)])
+        for j in range(len(vars)):
+            if vars[j][0] == 'R':
+                if mask:
+                    row.append(data.at[i, vars[j]])
+            elif vars[j][0] == 'Y':
+                continue
+            else:
+                row.append(data.at[i, vars[j]])
+        # if mask:
+        #     for j in range(num_missing):
+        #         row.append(data.at[i, 'R'+str(j+1)])
         matrix.append(row)
+
     return matrix
 
 def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', mask=False):
@@ -88,7 +100,7 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         # import the rpart package from R which will allow us to train an rpart model
         rpart_package = importr('rpart')
 
-        formula = create_formula(d, num_missing, mask)
+        formula = create_formula(data, mask)
 
         # train a decision tree, and use all default values as specified in Josse et al.
         tree = rpart_package.rpart(formula=Formula(formula), data=data)
@@ -99,7 +111,7 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         # import the partykit package from R which contains the ctree implementation
         partykit_package = importr('partykit')
 
-        formula = create_formula(d, num_missing, mask)
+        formula = create_formula(data, mask)
         
         # train a ctree using all default values
         tree = partykit_package.ctree(formula=Formula(formula), data=data)
@@ -109,7 +121,7 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         # import the ranger package from R which contains the random forest implementation
         ranger_package = importr('ranger')
 
-        formula = create_formula(d, num_missing, mask)
+        formula = create_formula(data, mask)
 
         # train a random forest using all default values from the package
         rand_forest = ranger_package.ranger(formula=Formula(formula), data=data)
@@ -120,7 +132,7 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         # first step is to recombine all the X variables and/or the R variables into a single
         # two-dimensional array in the original format of the multivariate normal function
 
-        matrix = create_matrix(data, d, num_missing, mask)
+        matrix = create_matrix(data, mask)
 
         # change the input format
         train_matrix = xgb.DMatrix(matrix, label=data['Y'])
@@ -159,7 +171,7 @@ def make_predictions(data_test, d, model_type, mask, model, num_missing=3):
         # first step is to recombine all the X variables and/or the R variables into a single
         # two-dimensional array
 
-        matrix = create_matrix(data_test, d, num_missing, mask)
+        matrix = create_matrix(data_test, mask)
 
         # change the input format 
         test_matrix = xgb.DMatrix(matrix)

@@ -79,7 +79,7 @@ def run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, imp
     predictions = list(pd.Series(predictions).fillna(np.mean(predictions)))
     return r2_score(data_test['Y'], predictions)
     
-def run_experiments(repetitions=1000, verbose=False):
+def run_experiments(repetitions=1000, missing_mechanism='MCAR', verbose=False):
     """
     This function runs the synthetic experiments using four scenarios:
     1. no missing values as a baseline
@@ -90,14 +90,13 @@ def run_experiments(repetitions=1000, verbose=False):
     It repeats each scenario by the specified amount of times and reports
     the average of the R^2 values.
     """
-    r2_values = [[], [], [], [], [], [], [], [], []]
+    r2_values = [[], [], [], [], [], [], [], [], [], []]
 
     size = 2000
     np.random.seed(0)
 
     model_type = 'rpart'
     DGP = 'quadratic'
-    missing_mechanism = 'MCAR'
     d = 9
     print(model_type, 'and ctree;', DGP, missing_mechanism, 'size='+str(size), 'repetitions=', repetitions)
     print()
@@ -172,6 +171,13 @@ def run_experiments(repetitions=1000, verbose=False):
         r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
         cnt += 1
 
+        """
+        MIA
+        """
+        mask = False
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'mia'))
+        cnt += 1
+
     return [np.mean(r2_values[i]) for i in range(9)], r2_values
 
 if __name__ == "__main__":
@@ -181,23 +187,27 @@ if __name__ == "__main__":
     pandas2ri.activate()
     np.random.seed(0)
 
-    if len(sys.argv) == 2:
+    if len(sys.argv) >= 2:
         testing = sys.argv[1]
 
         if testing == 'True':
-            print(run_single_experiment(1000, 10, 'quadratic', 'MCAR', False, 'xgboost', [99999]*10))
+            print(run_single_experiment(1000, 10, 'quadratic', 'MCAR', True, 'xgboost', 'mean'))
         elif testing == 'False':
-            result = run_experiments(repetitions=1000)
+            if len(sys.argv) < 2:
+                print('input desired missingness mechanism')
+            else:
+                missing_mechanism = sys.argv[2]
+
+            result = run_experiments(repetitions=1000, missing_mechanism=missing_mechanism)
             print('mean values', result[0])
-            print('baseline, mean, mean with mask, out of range, out of range with mask, CART with surrogate splits',
-                'CART with surrogate splits with mask', 'ctree no mask', 'ctree with mask')
             
             output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
                                 'rpart': result[1][5], 'rpart + mask': result[1][6], 'ctree': result[1][7],
-                                'ctree + mask': result[1][8]})
-            # print(output)
+                                'ctree + mask': result[1][8], 'mia': result[1][9]})
+            print(output.columns)
+
             # pickle the entire array of results
-            with open('r2_values.pkl', 'wb') as file:
+            with open('r2_values_'+missing_mechanism+'.pkl', 'wb') as file:
                 pickle.dump(output, file)
 
             print('success')
