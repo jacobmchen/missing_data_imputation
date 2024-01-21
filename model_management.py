@@ -17,6 +17,7 @@ from sklearn.tree import DecisionTreeRegressor
 
 # for testing purposes, import code for generating a dataset
 from data_generation import generate_data
+from data_generation import create_matrix
 
 # Import necessary packages to use R in Python
 import rpy2.robjects as robjects
@@ -42,30 +43,6 @@ def create_formula(data, mask):
             formula += '+'+vars[i]
 
     return formula
-
-def create_matrix(data, mask):
-    # helper function for creating a data matrix in the format
-    # required for xgboost
-
-    vars = data.columns
-
-    matrix = []
-    for i in range(len(data)):
-        row = []
-        for j in range(len(vars)):
-            if vars[j][0] == 'R':
-                if mask:
-                    row.append(data.at[i, vars[j]])
-            elif vars[j][0] == 'Y':
-                continue
-            else:
-                row.append(data.at[i, vars[j]])
-        # if mask:
-        #     for j in range(num_missing):
-        #         row.append(data.at[i, 'R'+str(j+1)])
-        matrix.append(row)
-
-    return matrix
 
 def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', mask=False):
     """

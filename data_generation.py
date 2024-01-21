@@ -14,11 +14,37 @@ from sklearn.metrics import r2_score
 from sklearn.tree import DecisionTreeRegressor
 import pickle
 
+from em_imputation import em_imputation
+
 # Import necessary packages to use R in Python
 import rpy2.robjects as robjects
 import rpy2.robjects.packages as rpackages
 from rpy2.robjects.packages import importr
 from rpy2.robjects import pandas2ri
+
+def create_matrix(data, mask):
+    # helper function for creating a data matrix in the format
+    # required for xgboost
+
+    vars = data.columns
+
+    matrix = []
+    for i in range(len(data)):
+        row = []
+        for j in range(len(vars)):
+            if vars[j][0] == 'R':
+                if mask:
+                    row.append(data.at[i, vars[j]])
+            elif vars[j][0] == 'Y':
+                continue
+            else:
+                row.append(data.at[i, vars[j]])
+        # if mask:
+        #     for j in range(num_missing):
+        #         row.append(data.at[i, 'R'+str(j+1)])
+        matrix.append(row)
+
+    return matrix
 
 def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_value=[0]*10, DGP='quadratic', missing='MCAR'):
     """
@@ -175,20 +201,20 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
         # step 5: return the updated dataset
         return data_copy
     elif imputation_value == 'gaussian':
-        # **this is still in progress
-
+        print(data)
         # step 1: fill in nan values in the original dataset
         data_copy = data.copy()
         for i in range(num_missing):
             for j in range(len(data_copy['X' + str(i+1)])):
                 if data_copy.at[j, 'R' + str(i+1)] == 0:
                     data_copy.at[j, 'X' + str(i+1)] = np.nan
+        print(data_copy)
 
         # step 2: convert the dataset into the format necessary for the norm package
         data_copy = data_copy.drop(columns=['R1', 'R2', 'R3', 'Y'])
         vector = []
         for i in range(d):
-            vals = np.array(data['X'+str(i+1)])
+            vals = np.array(data_copy['X'+str(i+1)])
             for j in range(len(vals)):
                 vector.append(vals[j])
         vector = robjects.FloatVector(vector)
@@ -208,10 +234,10 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
         output = getparam(s, thetahat, corr=False)
         mu_hat = output[0]
         sigma_hat = output[1]
-        print(mu_hat)
-        print(sigma_hat)
 
-        return True
+        data_copy = em_imputation(data, create_matrix(data_copy, False), mu_hat, sigma_hat, d, num_missing)
+
+        return data_copy
     elif imputation_value == 'no_missing':
         return data
 
@@ -243,4 +269,6 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
 if __name__ == "__main__":
     np.random.seed(0)
 
-    print(generate_data(missing="MCAR", imputation_value='mia'))
+    pandas2ri.activate()
+
+    print(generate_data(missing="MCAR", imputation_value='gaussian'))
