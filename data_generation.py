@@ -201,14 +201,12 @@ def generate_data(size=1000, rho=0.5, d=10, num_missing=3, p=0.8, imputation_val
         # step 5: return the updated dataset
         return data_copy
     elif imputation_value == 'gaussian':
-        print(data)
         # step 1: fill in nan values in the original dataset
         data_copy = data.copy()
         for i in range(num_missing):
             for j in range(len(data_copy['X' + str(i+1)])):
                 if data_copy.at[j, 'R' + str(i+1)] == 0:
                     data_copy.at[j, 'X' + str(i+1)] = np.nan
-        print(data_copy)
 
         # step 2: convert the dataset into the format necessary for the norm package
         data_copy = data_copy.drop(columns=['R1', 'R2', 'R3', 'Y'])

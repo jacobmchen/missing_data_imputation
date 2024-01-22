@@ -90,7 +90,7 @@ def run_experiments(repetitions=1000, missing_mechanism='MCAR', verbose=False):
     It repeats each scenario by the specified amount of times and reports
     the average of the R^2 values.
     """
-    r2_values = [[], [], [], [], [], [], [], [], [], []]
+    r2_values = [[], [], [], [], [], [], [], [], [], [], [], []]
 
     size = 2000
     np.random.seed(0)
@@ -178,7 +178,21 @@ def run_experiments(repetitions=1000, missing_mechanism='MCAR', verbose=False):
         r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'mia'))
         cnt += 1
 
-    return [np.mean(r2_values[i]) for i in range(9)], r2_values
+        """
+        Gaussian
+        """
+        mask = False
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'gaussian'))
+        cnt += 1
+
+        """
+        Gaussian + mask
+        """
+        mask = True
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'gaussian'))
+        cnt += 1
+
+    return [np.mean(r2_values[i]) for i in range(12)], r2_values
 
 if __name__ == "__main__":
     error_message = 'incorrect usage: use \'python3 missing_data_imputation.py True\' or \'python3 missing_data_imputation.py True\' to indicate whether testing'
@@ -203,7 +217,8 @@ if __name__ == "__main__":
             
             output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
                                 'rpart': result[1][5], 'rpart + mask': result[1][6], 'ctree': result[1][7],
-                                'ctree + mask': result[1][8], 'mia': result[1][9]})
+                                'ctree + mask': result[1][8], 'mia': result[1][9], 'gaussian': result[1][10],
+                                'gaussian + mask': result[1][11]})
             print(output.columns)
 
             # pickle the entire array of results
