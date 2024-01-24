@@ -91,7 +91,10 @@ def train_model(data, d=9, num_missing=3, DGP='quadratic', model='regression', m
         formula = create_formula(data, mask)
         
         # train a ctree using all default values
-        tree = partykit_package.ctree(formula=Formula(formula), data=data)
+        # ctree(y~., data=train, controls=ctree_control(
+        #            minbucket=min_samples_leaf, mincriterion=0.0)), min_samples_leaf = 30
+        # set min_samples_leaf
+        tree = partykit_package.ctree(formula=Formula(formula), control=partykit_package.ctree_control(minbucket=30, mincriterion=0.0), data=data)
 
         return tree
     elif model == 'random_forest':
