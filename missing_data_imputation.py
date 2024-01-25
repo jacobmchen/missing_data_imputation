@@ -79,7 +79,7 @@ def run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, imp
     predictions = list(pd.Series(predictions).fillna(np.mean(predictions)))
     return r2_score(data_test['Y'], predictions)
     
-def run_experiments(repetitions=1000, missing_mechanism='MCAR', verbose=False):
+def run_experiments(repetitions=1000, model_type='rpart', missing_mechanism='MCAR', verbose=False):
     """
     This function runs the synthetic experiments using four scenarios:
     1. no missing values as a baseline
@@ -90,12 +90,17 @@ def run_experiments(repetitions=1000, missing_mechanism='MCAR', verbose=False):
     It repeats each scenario by the specified amount of times and reports
     the average of the R^2 values.
     """
-    r2_values = [[], [], [], [], [], [], [], [], [], [], [], []]
+    if model_type == 'rpart':
+        num_methods = 12
+        r2_values = [[], [], [], [], [], [], [], [], [], [], [], []]
+    else:
+        num_methods = 8
+        r2_values = [[], [], [], [], [], [], [], []]
 
     size = 2000
     np.random.seed(0)
 
-    model_type = 'rpart'
+    # model_type = 'rpart'
     DGP = 'quadratic'
     d = 9
     print(model_type, 'and ctree;', DGP, missing_mechanism, 'size='+str(size), 'repetitions=', repetitions)
@@ -146,53 +151,57 @@ def run_experiments(repetitions=1000, missing_mechanism='MCAR', verbose=False):
         """
         CART with surrogate splits with no mask
         """
-        mask = False
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
-        cnt += 1
+        if model_type == 'rpart':
+            mask = False
+            r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+            cnt += 1
 
         """
         CART with surrogate splits with mask
         """
-        mask = True
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
-        cnt += 1
+        if model_type == 'rpart':
+            mask = True
+            r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'nan'))
+            cnt += 1
 
         """
         ctree with no mask
         """
-        mask = False
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
-        cnt += 1
+        if model_type == 'rpart':
+            mask = False
+            r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
+            cnt += 1
 
         """
         ctree with mask
         """
-        mask = True
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
-        cnt += 1
+        if model_type == 'rpart':
+            mask = True
+            r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'ctree', 'nan'))
+            cnt += 1
 
         """
         MIA
         """
         mask = False
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'mia'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'mia'))
         cnt += 1
 
         """
         Gaussian
         """
         mask = False
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'gaussian'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'gaussian'))
         cnt += 1
 
         """
         Gaussian + mask
         """
         mask = True
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, 'rpart', 'gaussian'))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, 'gaussian'))
         cnt += 1
 
-    return [np.mean(r2_values[i]) for i in range(12)], r2_values
+    return [np.mean(r2_values[i]) for i in range(num_methods)], r2_values
 
 if __name__ == "__main__":
     error_message = 'incorrect usage: use \'python3 missing_data_imputation.py True\' or \'python3 missing_data_imputation.py True\' to indicate whether testing'
@@ -211,18 +220,24 @@ if __name__ == "__main__":
                 print('input desired missingness mechanism')
             else:
                 missing_mechanism = sys.argv[2]
+                model_type = sys.argv[3]
 
             result = run_experiments(repetitions=1000, missing_mechanism=missing_mechanism)
             print('mean values', result[0])
             
-            output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
+            if model_type == 'rpart':
+                output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
                                 'rpart': result[1][5], 'rpart + mask': result[1][6], 'ctree': result[1][7],
                                 'ctree + mask': result[1][8], 'mia': result[1][9], 'gaussian': result[1][10],
                                 'gaussian + mask': result[1][11]})
+            else:
+                output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
+                                'mia': result[1][5], 'gaussian': result[1][6],
+                                'gaussian + mask': result[1][7]})
             print(output.columns)
 
             # pickle the entire array of results
-            with open('r2_values_'+missing_mechanism+'.pkl', 'wb') as file:
+            with open('r2_values_'+missing_mechanism+'_'+model_type+'.pkl', 'wb') as file:
                 pickle.dump(output, file)
 
             print('success')
