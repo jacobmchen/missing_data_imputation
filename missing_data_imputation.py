@@ -138,14 +138,14 @@ def run_experiments(repetitions=1000, model_type='rpart', missing_mechanism='MCA
         out of range imputation
         """
         mask = False
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [999999]*d))
         cnt += 1
 
         """
         out of range imputation with mask
         """
         mask = True
-        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [99999]*d))
+        r2_values[cnt].append(run_single_experiment(size, d, DGP, missing_mechanism, mask, model_type, [999999]*d))
         cnt += 1
 
         """
@@ -204,7 +204,7 @@ def run_experiments(repetitions=1000, model_type='rpart', missing_mechanism='MCA
     return [np.mean(r2_values[i]) for i in range(num_methods)], r2_values
 
 if __name__ == "__main__":
-    error_message = 'incorrect usage: use \'python3 missing_data_imputation.py True\' or \'python3 missing_data_imputation.py True\' to indicate whether testing'
+    error_message = 'incorrect usage: use \'python3 missing_data_imputation.py False\' or \'python3 missing_data_imputation.py True\' to indicate whether testing'
 
     # Must be activated to use R packages in Python
     pandas2ri.activate()
@@ -214,31 +214,31 @@ if __name__ == "__main__":
         testing = sys.argv[1]
 
         if testing == 'True':
-            print(run_single_experiment(1000, 10, 'quadratic', 'MCAR', True, 'xgboost', 'mean'))
+            print(run_single_experiment(1000, 10, 'quadratic', 'predictive', True, 'random_forest', 'mean'))
         elif testing == 'False':
-            if len(sys.argv) < 2:
-                print('input desired missingness mechanism')
-            else:
-                missing_mechanism = sys.argv[2]
-                model_type = sys.argv[3]
 
-            result = run_experiments(repetitions=1000, missing_mechanism=missing_mechanism)
-            print('mean values', result[0])
-            
-            if model_type == 'rpart':
-                output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
-                                'rpart': result[1][5], 'rpart + mask': result[1][6], 'ctree': result[1][7],
-                                'ctree + mask': result[1][8], 'mia': result[1][9], 'gaussian': result[1][10],
-                                'gaussian + mask': result[1][11]})
-            else:
-                output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
-                                'mia': result[1][5], 'gaussian': result[1][6],
-                                'gaussian + mask': result[1][7]})
-            print(output.columns)
+            missing_mechanisms = ['MCAR', 'MNAR', 'predictive']
+            model_types = ['rpart', 'random_forest', 'xgboost']
 
-            # pickle the entire array of results
-            with open('r2_values_'+missing_mechanism+'_'+model_type+'.pkl', 'wb') as file:
-                pickle.dump(output, file)
+            for missing_mechanism in missing_mechanisms:
+                for model_type in model_types:
+                    result = run_experiments(repetitions=1000, model_type=model_type, missing_mechanism=missing_mechanism)
+                    print('mean values', result[0])
+                    
+                    if model_type == 'rpart':
+                        output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
+                                        'rpart': result[1][5], 'rpart + mask': result[1][6], 'ctree': result[1][7],
+                                        'ctree + mask': result[1][8], 'mia': result[1][9], 'gaussian': result[1][10],
+                                        'gaussian + mask': result[1][11]})
+                    else:
+                        output = pd.DataFrame({'mean': result[1][1], 'mean + mask': result[1][2], 'oor': result[1][3], 'oor + mask': result[1][4],
+                                        'mia': result[1][5], 'gaussian': result[1][6],
+                                        'gaussian + mask': result[1][7]})
+                    print(output.columns)
+
+                    # pickle the entire array of results
+                    with open('r2_values_'+missing_mechanism+'_'+model_type+'.pkl', 'wb') as file:
+                        pickle.dump(output, file)
 
             print('success')
         else:
